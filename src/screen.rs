@@ -10,6 +10,6 @@ pub enum ScreenAction {
 }
 
 pub trait Screen {
-    fn draw(&self, frame: &mut Frame);
+    fn draw(&mut self, frame: &mut Frame);
     fn handle(&mut self, event: Event) -> anyhow::Result<ScreenAction>;
 }
