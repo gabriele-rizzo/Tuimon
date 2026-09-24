@@ -1,9 +1,12 @@
-use std::io::Stdout;
+use std::{
+    io::Stdout,
+    time::{Duration, Instant},
+};
 
 use crossterm::{
-    event::{self, EnableMouseCapture},
+    event::{self, DisableMouseCapture, EnableMouseCapture},
     execute,
-    terminal::{self, EnterAlternateScreen},
+    terminal::{self, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
 
@@ -13,6 +16,7 @@ pub struct App {
     screens: Vec<Box<dyn Screen>>,
     terminal: Terminal<CrosstermBackend<Stdout>>,
     running: bool,
+    tick_rate: Duration,
 }
 
 impl App {
@@ -30,10 +34,19 @@ impl App {
             screens: vec![Box::new(initial)],
             terminal,
             running: true,
+            tick_rate: Duration::from_millis(250),
         })
     }
 
+    /// How often `Screen::update` is called (and the UI redrawn) when no input arrives.
+    pub fn with_tick_rate(mut self, tick_rate: Duration) -> Self {
+        self.tick_rate = tick_rate;
+        self
+    }
+
     pub fn run(&mut self) -> anyhow::Result<()> {
+        let mut last_tick = Instant::now();
+
         while self.running {
             self.terminal.draw(|frame| {
                 if let Some(screen) = self.screens.last_mut() {
@@ -41,11 +54,25 @@ impl App {
                 }
             })?;
 
-            let event = event::read()?;
+            // Wait for input until the next tick is due; returns immediately if an event arrives.
+            let timeout = self.tick_rate.saturating_sub(last_tick.elapsed());
 
-            if let Some(screen) = self.screens.last_mut() {
-                let action = screen.handle(event)?;
-                self.handle(action);
+            if event::poll(timeout)? {
+                let event = event::read()?;
+
+                if let Some(screen) = self.screens.last_mut() {
+                    let action = screen.handle(event)?;
+                    self.handle(action);
+                }
+            }
+
+            if last_tick.elapsed() >= self.tick_rate {
+                if let Some(screen) = self.screens.last_mut() {
+                    let action = screen.update()?;
+                    self.handle(action);
+                }
+
+                last_tick = Instant::now();
             }
         }
 
@@ -78,8 +105,8 @@ impl Drop for App {
 
         let _ = execute!(
             self.terminal.backend_mut(),
-            EnterAlternateScreen,
-            EnableMouseCapture
+            LeaveAlternateScreen,
+            DisableMouseCapture
         );
 
         let _ = self.terminal.show_cursor();
